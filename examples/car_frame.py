@@ -32,16 +32,10 @@ PX_PER_MM = 4.0
 
 
 def make_image(p: pf.Params, car: Image.Image, fill=0.97, offset=0.0):
+    """The car as large as fits in the lit area, centred on the frame."""
     ext_x, ext_y = pf.projection_extent(p)
-    w, h = int(2 * ext_x * PX_PER_MM), int(2 * ext_y * PX_PER_MM)
-    img = Image.new("L", (w, h), 0)
-    car = car.convert("L")
-    scale = PX_PER_MM * min(2 * ext_x * fill / car.width, 2 * ext_y * fill / car.height)
-    cw, ch = int(car.width * scale), int(car.height * scale)
-    sprite = car.resize((cw, ch), Image.LANCZOS)
-    top = h / 2 - ch / 2 - offset * PX_PER_MM
-    img.paste(sprite, (int(w / 2 - cw / 2), int(top)))
-    return img
+    width = min(2 * ext_x * fill, 2 * ext_y * fill * car.width / car.height)
+    return pf.compose_wall_image(car, p, width, (0.0, offset), px_per_mm=PX_PER_MM)
 
 
 def pop_option(argv, name, default, conv=str):

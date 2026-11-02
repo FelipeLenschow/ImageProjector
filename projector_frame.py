@@ -625,17 +625,63 @@ def params_from_args(args):
     return Params(**{f.name: getattr(args, f.name) for f in fields(Params)})
 
 
-def main(argv=None):
-    args = build_argparser().parse_args(argv)
+def lit_area(p: Params):
+    """Geometry of the projection on the wall, all in mm (half sizes).
+
+    inner: edge of the lit area next to the frame; outer: how far it reaches
+    (the corners reach a little further, see projection_extent);
+    bezel / window: the visible frame.
+    """
+    z_lo, z_hi = p.z_band()
+    t_in = p.light_z / (p.light_z - z_lo)
+    t_out = p.light_z / (p.light_z - z_hi)
+    hx, hy = p.picture_w / 2 - p.wall_t / 2, p.picture_h / 2 - p.wall_t / 2
+    b = p.fit_clearance + p.bezel_skirt_t + p.bezel_flange
+    ext = projection_extent(p)
+    return {
+        "extent": [ext[0], ext[1]],
+        "inner": [hx * t_in, hy * t_in],
+        "outer": [hx * t_out, hy * t_out],
+        "box": [p.picture_w / 2, p.picture_h / 2],
+        "bezel": [p.picture_w / 2 + b, p.picture_h / 2 + b],
+        "window": [p.picture_w / 2 - p.window_overlap, p.picture_h / 2 - p.window_overlap],
+    }
+
+
+def compose_wall_image(img: Image.Image, p: Params, width_mm, center_mm=(0.0, 0.0),
+                       invert=False, px_per_mm=4.0):
+    """Place a picture on the wall: `width_mm` wide, centred at `center_mm`
+    (x right, y up, frame centre = 0). Returns an image covering exactly the
+    lit wall area, to be used with fit="stretch". Outside the picture is dark."""
+    ext_x, ext_y = projection_extent(p)
+    w, h = int(round(2 * ext_x * px_per_mm)), int(round(2 * ext_y * px_per_mm))
+    if img.mode in ("RGBA", "LA", "P"):
+        rgba = img.convert("RGBA")
+        bg = Image.new("RGBA", rgba.size, (0, 0, 0, 255))
+        img = Image.alpha_composite(bg, rgba)
+    pic = img.convert("L")
+    if invert:
+        pic = Image.eval(pic, lambda v: 255 - v)
+    pw = max(1, int(round(width_mm * px_per_mm)))
+    ph = max(1, int(round(width_mm * pic.height / pic.width * px_per_mm)))
+    pic = pic.resize((pw, ph), Image.LANCZOS)
+    out = Image.new("L", (w, h), 0)
+    x0 = w / 2 + center_mm[0] * px_per_mm - pw / 2
+    y0 = h / 2 - center_mm[1] * px_per_mm - ph / 2
+    out.paste(pic, (int(round(x0)), int(round(y0))))
+    return out
+
+
+def generate(p: Params, img: Image.Image, out_dir, preview_only=False, log=print):
+    """Compute the stencils and write preview.png, target.png and (unless
+    preview_only) all STL parts to out_dir. Returns the list of files written."""
     if Manifold is None:
         raise SystemExit("manifold3d is required: pip install -r requirements.txt")
-    p = params_from_args(args)
     p.validate()
-    os.makedirs(args.out, exist_ok=True)
-    log = lambda s: print(s, flush=True)
-    out = lambda name: os.path.join(args.out, name)
+    os.makedirs(out_dir, exist_ok=True)
+    out = lambda name: os.path.join(out_dir, name)
+    written = []
 
-    img = Image.open(args.image) if args.image else builtin_pattern(args.pattern)
     light = np.array([0.0, 0.0, p.light_z])
     extent = projection_extent(p)
     wimg = WallImage(img, p, extent)
@@ -650,9 +696,10 @@ def main(argv=None):
         rasters[wall.name] = rasterize(regions[wall.name], wall, p)
     render_preview(p, rasters, light, extent, out("preview.png"))
     wimg.render(extent, 2.0).save(out("target.png"))
+    written += [out("preview.png"), out("target.png")]
     log(f"Wrote {out('preview.png')} and {out('target.png')}")
-    if args.preview_only:
-        return 0
+    if preview_only:
+        return written
 
     panels_world = []
     for wall in walls(p):
@@ -661,14 +708,25 @@ def main(argv=None):
         part = panel_print(p, wall, world)
         pieces = len(part.decompose())
         n = write_stl(part, out(f"wall_{wall.name}.stl"), f"wall_{wall.name}")
+        written.append(out(f"wall_{wall.name}.stl"))
         note = "" if pieces == 1 else f"  WARNING: {pieces} separate pieces"
         log(f"Wrote {out(f'wall_{wall.name}.stl')} ({n} triangles){note}")
     back, backer, bezel = build_back(p), build_backer(p), build_bezel(p)
     for name, part in (("back", back), ("backer", backer), ("bezel", bezel)):
         n = write_stl(part, out(f"{name}.stl"), name)
+        written.append(out(f"{name}.stl"))
         log(f"Wrote {out(f'{name}.stl')} ({n} triangles)")
     n = write_stl(assembled(p, back, panels_world, backer, bezel), out("assembly.stl"))
+    written.append(out("assembly.stl"))
     log(f"Wrote {out('assembly.stl')} ({n} triangles) - for viewing only")
+    return written
+
+
+def main(argv=None):
+    args = build_argparser().parse_args(argv)
+    p = params_from_args(args)
+    img = Image.open(args.image) if args.image else builtin_pattern(args.pattern)
+    generate(p, img, args.out, args.preview_only, log=lambda s: print(s, flush=True))
     return 0
 
 

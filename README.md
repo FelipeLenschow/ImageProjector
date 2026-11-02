@@ -18,6 +18,27 @@ the frame.
         │ └─────┘  ◄─ back plate: keyhole hangers, alignment lip, cable exit
 ```
 
+## Designer GUI
+
+```bash
+python3 gui.py        # opens http://localhost:8765 in your browser
+```
+
+- **Load** any picture (button or drag & drop). The Supra loads by default.
+- **Drag** the picture to choose which part the frame covers, **scroll** to
+  resize it, or use the arrow keys to nudge (Shift = 10 mm). The size and
+  position can also be typed in.
+- Everything outside the lit area is dimmed. The dark diagonals are the
+  corner seams, and the dashed line is how far the light reaches.
+- **Threshold** and **Invert** set what becomes light; the *Stencil* view
+  shows exactly what will be cut.
+- **Frame** settings change the photo size, depth, light height and reach.
+- **Preview projection** runs the real stencil simulation (about 20 s).
+  **Generate STLs** writes every part to `gui_out/<time>/` and offers them as
+  a .zip download.
+
+Everything runs locally on your computer.
+
 ## Supra design (ready to print)
 
 ![Supra projection](docs/preview_supra.png)
