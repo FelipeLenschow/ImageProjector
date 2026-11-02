@@ -1,9 +1,10 @@
 # ImageProjector – shadow-projecting picture frame
 
-`projector_frame.py` generates printable STL files for a wall-hung picture frame
-with a light inside. The frame's deep side walls are perforated, and light
-from an LED in the centre shines through the holes onto the wall **around**
-the frame, drawing an image there.
+`projector_frame.py` generates printable STL files for a wall-hung picture
+frame with a light inside. The four deep side walls are **stencils**: your
+image is cut out of them as continuous shapes. An LED in the middle of the
+frame shines through them and projects the image onto the wall **around**
+the frame.
 
 ```
         wall (z = 0)
@@ -12,128 +13,120 @@ the frame, drawing an image there.
         │   ││┌────── backer plate with LED post
         │ ┌─┴┴┴─┐
         │ │  ▼  │  ◄─ LED points toward the wall, at light_z
-        │ │  ·  │
- light ◄┼─o  ·  o─┼► side walls with holes, each cut along its own light ray
+ light ◄┼─▒     ▒─┼► side panels: stencils cut along the light rays
  on wall│ │     │
-        │ └─────┘  ◄─ back plate with keyhole hangers + cable exit
+        │ └─────┘  ◄─ back plate: keyhole hangers, alignment lip, cable exit
 ```
-
-![simulated projection](docs/preview_sunburst.png)
-
-*Simulated projection of the built-in `sunburst` pattern (`docs/preview_sunburst.png`).
-The target image as mapped on the wall is shown in `docs/target_sunburst.png`.*
 
 ## Car design (ready to print)
 
 ![car projection](docs/preview_car.png)
 
 `examples/car_frame.py` draws an original sports-car silhouette
-(`docs/car_image.png`) and builds a frame around it. The car is projected
-above the frame, with its mirror reflection below, and speed lines are
-projected on both sides. Ready-made STLs are in `stl/car/`: a landscape
-10 × 15 cm photo, a 70 mm deep frame, and the light 58 mm from the wall.
+(`docs/car_image.png`). It projects the car above the frame, its mirror
+reflection below, and speed lines to both sides.
+`docs/raytrace_car.png` shows the same projection, ray-traced through the
+actual STL geometry. The ready-made STLs in `stl/car/` are for a landscape
+15 × 10 cm photo, a 60 mm deep frame, and the light 48 mm from the wall.
 
 ```bash
-python3 examples/car_frame.py -o out_car                 # rebuild
-python3 examples/car_frame.py -o out_car --picture-w 180 --picture-h 130   # bigger photo
+python3 examples/car_frame.py -o out_car                  # rebuild
+python3 examples/car_frame.py -o out_car --preview-only   # preview only (fast)
 ```
 
-Any `projector_frame.py` option can be added. To use **your own car**, pass a
-high-contrast silhouette (white car on black) to `projector_frame.py`.
-Keep the car out of the middle of the image, and size it to fit just above
-the frame. That area has the densest dots, because rays through the top
-wall only land in a wedge above the frame.
+**Your own car:** pass a high-contrast picture (white car on black) to
+`projector_frame.py`. Keep the car out of the middle of the image, because
+the frame covers that part. Details far from the frame are squeezed into a
+thin strip of the panels, so keep the important parts close to the frame.
 
 ## How it works
 
-1. A regular grid of cells is laid on the inside of the four side walls.
-2. For each cell the script traces the ray *LED → cell → wall* and works out
-   where it lands on the wall.
-3. It samples your image at that point. Bright areas get holes, sized by
-   brightness (`halftone`) or all the same size (`threshold`).
-4. Each hole is cut as a prism **along its own ray**, so light passes through
-   cleanly even at steep angles.
+1. Every point on a side panel is traced: *LED → point → wall*. If the ray
+   lands on a bright part of the image, that point is cut open. The open
+   areas become smooth outlines (no dots or pixels).
+2. The cut edges are tilted along the light rays through the panel's
+   thickness, so the light passes the full shape even at steep angles.
+3. Dark areas fully enclosed by bright ones (a wheel hub, a window) would
+   fall out of a stencil. Each one gets a thin **bridge** to the panel,
+   taking the shortest route. It shows as a thin dark line in the
+   projection.
+4. Plastic strips thinner than `--min-web` and gaps narrower than
+   `--min-gap` are removed so everything prints.
 
-Dots further from the frame land bigger and dimmer, so the image fades
-outwards. `--max-magnification` limits how far out the projection goes.
-The centre of your image falls behind the frame and is not visible, so put
-the interesting parts of the image towards its edges.
+Brightness falls off with distance from the frame, so the image is brightest
+next to the frame. There are thin dark lines along the diagonals where two
+panels meet at a corner.
 
 ## Usage
 
 ```bash
 pip install -r requirements.txt
 
-# built-in pattern (sunburst | stars | rings | waves)
-python3 projector_frame.py --pattern sunburst -o out
-
-# your own image (bright = light on the wall)
-python3 projector_frame.py my_image.png -o out
-python3 projector_frame.py silhouette.png --invert --mode threshold -o out
-
-# quick iteration: only preview.png / target.png, no STL
+python3 projector_frame.py --pattern sunburst -o out      # built-in: sunburst, stars, rings, waves
+python3 projector_frame.py my_image.png -o out            # bright = light on the wall
+python3 projector_frame.py logo.png --invert -o out       # dark = light
 python3 projector_frame.py my_image.png --preview-only -o out
-
-# a 13 x 18 cm photo, deeper frame
-python3 projector_frame.py my_image.png --picture-w 130 --picture-h 180 --depth 65 --light-z 50
 ```
 
-Output in `out/`:
+Output in `out/` (each part is already in its print orientation):
 
-| file           | what                                                        |
-|----------------|-------------------------------------------------------------|
-| `body.stl`     | back plate + perforated walls (print back-side down)        |
-| `backer.stl`   | opaque plate behind the photo with the LED post (print flat, post up) |
-| `bezel.stl`    | front frame with the picture window (print face down)       |
-| `assembly.stl` | everything assembled, for viewing only                      |
-| `preview.png`  | simulated light pattern on the wall                         |
-| `target.png`   | your image as mapped onto the wall, for comparison          |
+| file | what | print |
+|---|---|---|
+| `wall_top.stl`, `wall_bottom.stl` | full-width stencil panels | flat, outside face down |
+| `wall_left.stl`, `wall_right.stl` | panels that fit between them | flat, outside face down |
+| `back.stl` | back plate: keyholes, alignment lip, cable hole | back side down |
+| `backer.stl` | opaque plate behind the photo with the LED post | flat, post up |
+| `bezel.stl` | front frame with the picture window | face down |
+| `assembly.stl` | everything assembled, for viewing only | – |
+| `preview.png` | simulated light on the wall | |
+| `target.png` | your image as mapped onto the wall | |
 
-Run `python3 projector_frame.py --help` for every parameter (all in mm).
-The most useful ones:
+Main parameters (all in mm; `--help` lists everything):
 
 | parameter | default | meaning |
 |---|---|---|
-| `--picture-w/-h` | 100 × 150 | photo size = body footprint |
-| `--depth` | 55 | how far the frame sticks out from the wall |
-| `--light-z` | 42 | height of the light above the wall |
-| `--pitch` | 2.6 | hole grid spacing (smaller = finer image, more fragile) |
-| `--hole-min/-max` | 0.9 / 1.8 | hole size range |
-| `--max-magnification` | 4 | how far out the projection reaches (×frame size) |
-| `--mode` | halftone | `halftone` (size ∝ brightness) or `threshold` |
-| `--fit` | cover | how the image fills the projection area: `cover`, `contain`, `stretch` |
+| `--picture-w/-h` | 100 × 150 | photo size = box footprint |
+| `--depth` | 60 | how far the frame sticks out from the wall |
+| `--light-z` | 48 | height of the light above the wall |
+| `--wall-t` | 1.6 | panel thickness |
+| `--max-magnification` | 3.5 | how far out the image reaches (× frame size) |
+| `--threshold` | 0.5 | image brightness that counts as "light" |
+| `--fit` | cover | `cover`, `contain` or `stretch` the image over the lit area |
 | `--invert` | off | dark parts of the image become light |
-| `--hole-shape` | circle | `circle`, `square` or `diamond` (diamond prints without bridging) |
-| `--fit-clearance` | 0.25 | gap for the bezel's press fit; adjust for your printer |
-| `--keyhole-spacing` | 0.5 | keyhole spacing as a fraction of the width; 0 = one central keyhole |
+| `--bridge-w` | 0.9 | width of the bridges holding islands |
+| `--min-web` / `--min-gap` | 0.8 / 0.5 | smallest printable plastic / opening |
+| `--fit-clearance` | 0.25 | bezel press-fit gap; adjust for your printer |
 
 ## Building it
 
 **Printing**
-- Print the body and backer in an **opaque, dark** filament. Light filaments
-  glow through and wash out the projection. The bezel can be any colour.
-- Body: back side down, no supports. Holes in the vertical walls are small
-  enough to bridge; use `--hole-shape diamond` if your printer struggles.
-- Backer: front face down, LED post up. Bezel: face down.
+- Print the panels, back and backer in an **opaque, dark** filament. Light
+  filaments glow and wash out the image. The bezel can be any colour.
+- Panels print flat with no supports. The cut edges are slightly slanted
+  (they follow the light), so the inside edge overhangs a little over a few
+  layers. That's fine at normal settings.
 
 **Light**
-- A small, point-like, wide-angle LED gives the sharpest image. A bare 5 mm
-  LED, or a 1–3 W LED on a small board, both work. The bigger the
-  emitting area, the blurrier the dots.
+- Use a small, point-like, wide-angle LED: a bare 5 mm LED, or a 1–3 W LED
+  on a small board. The smaller the emitter, the sharper the edges.
 - The LED sits in the pocket at the tip of the backer post, **pointing at the
-  wall**. Its leads run along the slot in the post and the groove in the
-  backer, down the inside of the bottom wall (no holes there, see
-  `--cable-gap`), and out through the hole in the back plate. A groove in the
-  back face lets the cable leave the bottom edge flush with the wall.
-- Use a resistor or a constant-current driver suited to your LED, e.g. a
-  USB 5 V supply with the right series resistor.
+  wall**. Its leads run along the slot in the post and the diagonal groove
+  in the backer to the bottom-left corner. From there they go down the
+  inside corner of the box, which stays dark anyway, through the notch in
+  the lip and the hole in the back plate. A groove in the back face takes
+  the cable out of the bottom edge.
+- Use a resistor or constant-current driver suited to your LED.
 
 **Assembly**
-1. Hang the body on one or two screws using the keyhole slots. Lower it so the
-   screw heads slide up into the slots.
-2. Fit the LED and wire it through the back plate.
-3. Lay the backer on the wall rims with the LED post pointing at the wall.
-4. Lay the photo on the backer, then push the bezel over the front of the body.
+1. Stand the panels on the back plate around its lip: top and bottom run
+   the full width, left and right fit between them. Glue the corners and
+   bottom edges (CA glue), and seal the inside corners with black tape so no
+   light leaks.
+2. Fit the LED and run its wire down the bottom-left corner and out through
+   the back.
+3. Hang the box on one or two screws using the keyhole slots in the back.
+   Lower it so the screw heads slide up into the slots.
+4. Lay the backer on the panel rims with the LED post pointing at the wall.
+   Put the photo on it and push the bezel over the front.
 
-Dark rooms give the best effect. A thin spot of no light at the bottom centre
-is expected: no holes are cut where the cable runs.
+The effect is best in a dark room.
