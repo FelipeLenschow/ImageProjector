@@ -18,26 +18,27 @@ the frame.
         │ └─────┘  ◄─ back plate: keyhole hangers, alignment lip, cable exit
 ```
 
-## Car design (ready to print)
+## Supra design (ready to print)
 
-![car projection](docs/preview_car.png)
+![Supra projection](docs/preview_supra.png)
 
-`examples/car_frame.py` draws an original sports-car silhouette
-(`docs/car_image.png`). It projects the car above the frame, its mirror
-reflection below, and speed lines to both sides.
-`docs/raytrace_car.png` shows the same projection, ray-traced through the
-actual STL geometry. The ready-made STLs in `stl/car/` are for a landscape
+One big car centred on the frame: the frame covers the middle of the car,
+and the light draws the rest of it on the wall around the frame, about
+52 × 35 cm. The car picture is `examples/supra.jpg` (white = light).
+`docs/raytrace_supra.png` shows the projection ray-traced through the actual
+STL parts. The ready-made STLs in `stl/supra/` are for a landscape
 15 × 10 cm photo, a 60 mm deep frame, and the light 48 mm from the wall.
 
 ```bash
-python3 examples/car_frame.py -o out_car                  # rebuild
-python3 examples/car_frame.py -o out_car --preview-only   # preview only (fast)
+python3 examples/car_frame.py -o out_supra                  # rebuild
+python3 examples/car_frame.py -o out_supra --preview-only   # preview only (fast)
+python3 examples/car_frame.py --car-image my_car.png -o out # another car
 ```
 
-**Your own car:** pass a high-contrast picture (white car on black) to
-`projector_frame.py`. Keep the car out of the middle of the image, because
-the frame covers that part. Details far from the frame are squeezed into a
-thin strip of the panels, so keep the important parts close to the frame.
+`--car-fill` sets how much of the lit area the car fills (default 0.97),
+and `--car-offset` moves it up or down in mm. The best pictures are
+high-contrast stencil-style art: white car on black, with bold shapes.
+Very fine lines are widened to the minimum printable size.
 
 ## How it works
 
@@ -50,8 +51,10 @@ thin strip of the panels, so keep the important parts close to the frame.
    fall out of a stencil. Each one gets a thin **bridge** to the panel,
    taking the shortest route. It shows as a thin dark line in the
    projection.
-4. Plastic strips thinner than `--min-web` and gaps narrower than
-   `--min-gap` are removed so everything prints.
+4. Details thinner than the printer can make are widened instead of
+   dropped: dark lines become at least `--min-web` of plastic, and light
+   lines become openings at least `--min-gap` wide. Tiny dark specks
+   (`--min-island`) are opened up rather than bridged.
 
 Brightness falls off with distance from the frame, so the image is brightest
 next to the frame. There are thin dark lines along the diagonals where two

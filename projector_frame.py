@@ -90,6 +90,7 @@ class Params:
     min_web: float = 0.8          # thinner plastic strips are removed
     min_gap: float = 0.5          # narrower openings are closed
     bridge_w: float = 0.9         # width of the bridges holding islands
+    min_island: float = 1.0       # dark islands smaller than this (mm^2 on the panel) are cut open
     resolution: float = 0.08      # stencil raster resolution on the panel (mm)
     cable_gap: float = 0.0        # optional solid strip at x=0 on the bottom panel
 
@@ -301,24 +302,51 @@ def stencil_region(p: Params, wall: Wall, wimg: WallImage, light):
     if not contours:
         return CrossSection()
     region = CrossSection(contours, FillRule.EvenOdd).simplify(r * 0.3)
-    # printability: close thin plastic strips, then drop tiny openings
-    region = region.offset(p.min_web / 2).offset(-p.min_web / 2)
-    region = region.offset(-p.min_gap / 2).offset(p.min_gap / 2)
+    region = printable(region, p.min_web, p.min_gap)
     region = region ^ rect(-wall.cut_half, z_lo, wall.cut_half, z_hi)
     if wall.name == "bottom" and p.cable_gap > 0:
         region = region - rect(-p.cable_gap, z_lo - 1, p.cable_gap, z_hi + 1)
     return add_bridges(p, region).simplify(0.01)
 
 
+def fill_small_islands(region, min_area):
+    """Open up dark specks too small to be worth a bridge."""
+    small = [np.asarray(c) for c in region.to_polygons()
+             if -min_area < polygon_area(c) < 0]
+    if not small:
+        return region
+    return region + CrossSection([c[::-1] for c in small])
+
+
+def printable(region, min_web, min_gap, tiny=0.05):
+    """Make thin details printable by thickening them instead of dropping them.
+
+    Dark lines thinner than min_web become min_web wide plastic strips, and
+    light lines narrower than min_gap become min_gap wide openings, so fine
+    outlines in the image survive. Specks smaller than `tiny` mm^2 are dropped.
+    """
+    def pieces(cs):
+        return CrossSection.batch_boolean(
+            [c for c in cs.decompose() if c.area() > tiny] or [CrossSection()], OpType.Add)
+
+    closed = region.offset(min_web / 2).offset(-min_web / 2)
+    thin_dark = pieces(closed - region)
+    region = closed - thin_dark.offset(min_web / 2)
+    opened = region.offset(-min_gap / 2).offset(min_gap / 2)
+    thin_light = pieces(region - opened)
+    return opened + thin_light.offset(min_gap / 2)
+
+
 def add_bridges(p: Params, region):
     """Hold dark islands with one short bridge each (they'd fall out otherwise).
 
-    For every island, four candidate bridges are tried (up, down, left, right
-    from the island's centre to the edge of its cut-out) and the one that
-    blocks the least light is used.
+    For every island, four candidate bridges are tried: up, down, left and
+    right from the island to the nearest dark edge. The one that blocks the
+    least light is used.
     """
     bw = p.bridge_w
-    for _ in range(6):
+    region = fill_small_islands(region, p.min_island)
+    for _ in range(8):
         bridges = []
         for comp in region.decompose():
             polys = [np.asarray(c) for c in comp.to_polygons()]
@@ -331,31 +359,44 @@ def add_bridges(p: Params, region):
                     continue  # outer contour; holes (islands) have negative area
                 u = 0.5 * (c[:, 0].min() + c[:, 0].max())
                 z = 0.5 * (c[:, 1].min() + c[:, 1].max())
-                cands = [rect(u - bw / 2, z, u + bw / 2, z_hi),   # up
-                         rect(u - bw / 2, z_lo, u + bw / 2, z),   # down
-                         rect(u, z - bw / 2, u_hi, z + bw / 2),   # right
-                         rect(u_lo, z - bw / 2, u, z + bw / 2)]   # left
-                bridges.append(min(cands, key=lambda r_: (comp ^ r_).area()))
+                cands = []
+                for strip, axis, sign in (
+                        (rect(u - bw / 2, z, u + bw / 2, z_hi), 1, 1),    # up
+                        (rect(u - bw / 2, z_lo, u + bw / 2, z), 1, -1),   # down
+                        (rect(u, z - bw / 2, u_hi, z + bw / 2), 0, 1),    # right
+                        (rect(u_lo, z - bw / 2, u, z + bw / 2), 0, -1)):  # left
+                    # keep only the piece next to the island: island -> first dark edge
+                    pieces = (comp ^ strip).decompose()
+                    if not pieces:
+                        continue
+                    start = (u, z)[axis]
+                    first = min(pieces, key=lambda pc: min(
+                        abs(np.asarray(q)[:, axis] - start).min() for q in pc.to_polygons()))
+                    cands.append(first.offset(0.05))
+                if cands:
+                    bridges.append(min(cands, key=lambda b_: b_.area()))
         if not bridges:
             break
         region = region - CrossSection.batch_boolean(bridges, OpType.Add)
+        region = fill_small_islands(region, p.min_island)
     return region
 
 
 def rasterize(region, wall: Wall, p: Params, r=0.03):
     """Binary raster of a stencil region on the panel grid (for the preview)."""
+    from skimage.draw import polygon as fill_polygon
+
     z_lo, z_hi = p.z_band()
     w = int(2 * wall.cut_half / r) + 2
     h = int((z_hi - z_lo) / r) + 2
-    img = Image.new("L", (w, h), 0)
-    d = ImageDraw.Draw(img)
-    polys = [np.asarray(c) for c in region.to_polygons()]
-    polys.sort(key=lambda c: -abs(polygon_area(c)))
-    for c in polys:
-        pts = [((x + wall.cut_half) / r, (z - z_lo) / r) for x, z in c]
-        if len(pts) >= 3:
-            d.polygon(pts, fill=255 if polygon_area(c) > 0 else 0)
-    return np.asarray(img) > 127, r
+    mask = np.zeros((h, w), bool)
+    for c in region.to_polygons():  # even-odd: every contour toggles its inside
+        c = np.asarray(c)
+        if len(c) < 3:
+            continue
+        rr, cc = fill_polygon((c[:, 1] - z_lo) / r, (c[:, 0] + wall.cut_half) / r, mask.shape)
+        mask[rr, cc] ^= True
+    return mask, r
 
 
 # --------------------------------------------------------------------------
@@ -390,8 +431,9 @@ def render_preview(p: Params, rasters, light, extent, path, px_per_mm=2.0):
     rr = np.sqrt(X ** 2 + Y ** 2 + zl ** 2)
     inten = np.where(lit, (zl / rr) ** 4, 0.0)
     if inten.max() > 0:
-        inten = (inten / inten.max()) ** 0.45  # display gamma so dim areas show
-    rgb = np.stack([inten * 255, inten * 235, inten * 190], -1).astype(np.uint8)
+        # the eye sees brightness roughly logarithmically: show the falloff gently
+        inten = np.where(lit, 0.6 + 0.4 * (inten / inten.max()) ** 0.3, 0.0)
+    rgb = np.stack([inten * 255, inten * 246, inten * 225], -1).astype(np.uint8)
     out = Image.fromarray(rgb, "RGB")
     d = ImageDraw.Draw(out)
 
