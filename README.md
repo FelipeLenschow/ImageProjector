@@ -23,6 +23,27 @@ the frame, drawing an image there.
 *Simulated projection of the built-in `sunburst` pattern (`docs/preview_sunburst.png`).
 The target image as mapped on the wall is shown in `docs/target_sunburst.png`.*
 
+## Car design (ready to print)
+
+![car projection](docs/preview_car.png)
+
+`examples/car_frame.py` draws an original sports-car silhouette
+(`docs/car_image.png`) and builds a frame around it. The car is projected
+above the frame, with its mirror reflection below, and speed lines are
+projected on both sides. Ready-made STLs are in `stl/car/`: a landscape
+10 × 15 cm photo, a 70 mm deep frame, and the light 58 mm from the wall.
+
+```bash
+python3 examples/car_frame.py -o out_car                 # rebuild
+python3 examples/car_frame.py -o out_car --picture-w 180 --picture-h 130   # bigger photo
+```
+
+Any `projector_frame.py` option can be added. To use **your own car**, pass a
+high-contrast silhouette (white car on black) to `projector_frame.py`.
+Keep the car out of the middle of the image, and size it to fit just above
+the frame. That area has the densest dots, because rays through the top
+wall only land in a wedge above the frame.
+
 ## How it works
 
 1. A regular grid of cells is laid on the inside of the four side walls.
